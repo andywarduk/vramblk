@@ -1,23 +1,60 @@
-use std::io::Result;
+use std::{error::Error, ptr};
 
+use opencl3::{
+    command_queue::CommandQueue,
+    context::Context,
+    memory::{Buffer, CL_MEM_READ_WRITE},
+    types::CL_BLOCKING,
+};
 use vblk::{mount, BlockDevice};
 
-struct RamDisk {
+use crate::cl::initialise_cl;
+
+struct VRamDisk {
     blocks: usize,
     block_size: usize,
-    memory: Vec<u8>,
+    _cl_context: Context,
+    cl_queue: CommandQueue,
+    memory: Buffer<u8>,
 }
 
-impl RamDisk {
-    fn new(blocks: usize, block_size: usize) -> Self {
-        Self {
+impl VRamDisk {
+    fn new(gpu: Option<u16>, blocks: usize, block_size: usize) -> Result<Self, Box<dyn Error>> {
+        // Initialise CL
+        let (context, queue) = initialise_cl(gpu)?;
+
+        // Allocate a buffer on the CL device
+        #[cfg(debug_assertions)]
+        println!("Creating CL buffer");
+
+        let memory = unsafe {
+            Buffer::<u8>::create(
+                &context,
+                CL_MEM_READ_WRITE,
+                blocks * block_size,
+                ptr::null_mut(),
+            )
+        }
+        .map_err(|e| format!("Failed to create CL buffer: {e}"))?;
+
+        // Make sure we can read from it
+        let mut read_test = [0u8; 1];
+
+        let _event =
+            unsafe { queue.enqueue_read_buffer(&memory, CL_BLOCKING, 0, &mut read_test, &[]) }
+                .map_err(|e| format!("Failed to create CL buffer: {e}"))?;
+
+        // Return new struct
+        Ok(Self {
             blocks,
             block_size,
-            memory: vec![0; blocks * block_size]
-        }
+            _cl_context: context,
+            cl_queue: queue,
+            memory,
+        })
     }
 
-    fn mount(&mut self, nbd_device: &str) -> Result<()> {
+    fn mount(&mut self, nbd_device: &str) -> std::io::Result<()> {
         unsafe {
             // Mount the device
             mount(self, nbd_device, |device| {
@@ -28,7 +65,8 @@ impl RamDisk {
                         Ok(()) => (),
                         Err(e) => eprintln!("Failed to unmount device: {e}"),
                     }
-                }).expect("Failed to install terminate handler");
+                })
+                .expect("Failed to install terminate handler");
 
                 Ok(())
             })
@@ -36,28 +74,56 @@ impl RamDisk {
     }
 }
 
-impl BlockDevice for RamDisk {
-    fn read(&mut self, offset: u64, bytes: &mut [u8]) -> Result<()> {
-        println!("read request offset {} len {}", offset, bytes.len());
+impl BlockDevice for VRamDisk {
+    fn read(&mut self, offset: u64, bytes: &mut [u8]) -> std::io::Result<()> {
+        #[cfg(debug_assertions)]
+        println!("Read request: offset {} len {}", offset, bytes.len());
 
-        bytes.copy_from_slice(&self.memory[offset as usize..offset as usize + bytes.len()]);
+        let _event = unsafe {
+            self.cl_queue.enqueue_read_buffer(
+                &self.memory,
+                CL_BLOCKING,
+                offset as usize,
+                bytes,
+                &[],
+            )
+        }
+        .map_err(|cl_err| {
+            println!("Read error: {}", cl_err);
+            std::io::Error::new(std::io::ErrorKind::Other, cl_err)
+        })?;
 
         Ok(())
     }
 
-    fn write(&mut self, offset: u64, bytes: &[u8]) -> Result<()> {
-        println!("write request offset {} len {}", offset, bytes.len());
+    fn write(&mut self, offset: u64, bytes: &[u8]) -> std::io::Result<()> {
+        #[cfg(debug_assertions)]
+        println!("Write request: offset {} len {}", offset, bytes.len());
 
-        self.memory[offset as usize..offset as usize + bytes.len()].copy_from_slice(bytes);
+        let _event = unsafe {
+            self.cl_queue.enqueue_write_buffer(
+                &mut self.memory,
+                CL_BLOCKING,
+                offset as usize,
+                bytes,
+                &[],
+            )
+        }
+        .map_err(|cl_err| {
+            println!("Write error: {}", cl_err);
+            std::io::Error::new(std::io::ErrorKind::Other, cl_err)
+        })?;
 
         Ok(())
     }
 
     fn unmount(&mut self) {
-        println!("ramdisk unmounted!");
+        #[cfg(debug_assertions)]
+        println!("device unmounted");
     }
 
-    fn flush(&mut self) -> Result<()> {
+    fn flush(&mut self) -> std::io::Result<()> {
+        #[cfg(debug_assertions)]
         println!("flush request");
 
         Ok(())
@@ -72,14 +138,17 @@ impl BlockDevice for RamDisk {
     }
 }
 
-pub fn start_disk(nbd_device: &str, blocks: usize, block_size: usize) {
+pub fn start_disk(
+    nbd_device: &str,
+    gpu: Option<u16>,
+    blocks: usize,
+    block_size: usize,
+) -> Result<(), Box<dyn Error>> {
     // Create the block device
-    let mut blkdev = RamDisk::new(blocks, block_size);
+    let mut blkdev = VRamDisk::new(gpu, blocks, block_size)?;
 
     // Mount the block device
-    match blkdev.mount(nbd_device) {
-        Ok(()) => {},
-        Err(e) => eprintln!("Error mounting block device on {nbd_device}: {e}"),
-    }
-}
+    blkdev.mount(nbd_device)?;
 
+    Ok(())
+}
