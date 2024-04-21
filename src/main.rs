@@ -1,13 +1,13 @@
 #![deny(missing_docs)]
 
-//! Create NBD GPU GPU ram device
+//! Create NBD GPU ram device
 
-use std::{error::Error, process::exit};
+use std::{error::Error, process::ExitCode};
 
 use cl::list_devices;
 use clap::Parser;
-use libc::{sysconf, MCL_CURRENT, MCL_FUTURE, _SC_PAGESIZE};
-use parse_size::parse_size;
+use libc::{mlockall, sysconf, MCL_CURRENT, MCL_FUTURE, _SC_PAGESIZE};
+use parse_size::Config;
 
 mod cl;
 mod device;
@@ -37,29 +37,33 @@ struct MountArgs {
     #[clap(short = 'g', long = "gpu", action)]
     gpu: Option<u16>,
 
-    /// Disk block size. Must be power of 2 between 512 and machine page size
+    /// Disk block size. Must be power of 2 between 512 and machine page size. Defaults to machine page size
     #[clap(short = 'b', long = "block-size", default_value_t = page_size(), action, value_parser = parse_block_size_arg)]
     block_size: u64,
 
-    /// Disk size to create - eg. 1000m, 1g
+    /// Disk size to create - eg. 2097152k, 2048, 2g. Default unit megabytes
     #[clap(action, value_parser = parse_size_arg)]
     size: u64,
 }
 
-fn main() {
+fn main() -> ExitCode {
     // Prevent this process's memory from being swapped out
     unsafe {
-        libc::mlockall(MCL_CURRENT | MCL_FUTURE);
+        if mlockall(MCL_CURRENT | MCL_FUTURE) != 0 {
+            eprintln!("Warning: Failed to lock process memory");
+        }
     }
 
     // Main process
     match process_command() {
         Ok(()) => {}
         Err(e) => {
-            println!("Error: {e}");
-            exit(1);
+            eprintln!("Error: {e}");
+            return ExitCode::FAILURE;
         }
     }
+
+    return ExitCode::SUCCESS;
 }
 
 fn process_command() -> Result<(), Box<dyn Error>> {
@@ -92,7 +96,8 @@ fn process_command() -> Result<(), Box<dyn Error>> {
 }
 
 fn parse_size_arg(arg: &str) -> Result<u64, Box<dyn Error + Send + Sync>> {
-    let size = parse_size(arg)?;
+    let cfg = Config::new().with_binary().with_default_factor(1024 * 1024);
+    let size = cfg.parse_size(arg)?;
 
     if size == 0 {
         Err("Disk size must be > 0")?

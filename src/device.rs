@@ -1,4 +1,4 @@
-use std::{error::Error, ptr};
+use std::{error::Error, io, ptr};
 
 use opencl3::{
     command_queue::CommandQueue,
@@ -54,7 +54,7 @@ impl VRamDisk {
         })
     }
 
-    fn mount(&mut self, nbd_device: &str) -> std::io::Result<()> {
+    fn mount(&mut self, nbd_device: &str) -> io::Result<()> {
         unsafe {
             // Mount the device
             mount(self, nbd_device, |device| {
@@ -75,9 +75,9 @@ impl VRamDisk {
 }
 
 impl BlockDevice for VRamDisk {
-    fn read(&mut self, offset: u64, bytes: &mut [u8]) -> std::io::Result<()> {
+    fn read(&mut self, offset: u64, bytes: &mut [u8]) -> io::Result<()> {
         #[cfg(debug_assertions)]
-        println!("Read request: offset {} len {}", offset, bytes.len());
+        println!("Read request: offset {offset} len {}", bytes.len());
 
         let _event = unsafe {
             self.cl_queue.enqueue_read_buffer(
@@ -89,16 +89,16 @@ impl BlockDevice for VRamDisk {
             )
         }
         .map_err(|cl_err| {
-            println!("Read error: {}", cl_err);
-            std::io::Error::new(std::io::ErrorKind::Other, cl_err)
+            eprintln!("Read error: {}", cl_err);
+            io::Error::other(cl_err)
         })?;
 
         Ok(())
     }
 
-    fn write(&mut self, offset: u64, bytes: &[u8]) -> std::io::Result<()> {
+    fn write(&mut self, offset: u64, bytes: &[u8]) -> io::Result<()> {
         #[cfg(debug_assertions)]
-        println!("Write request: offset {} len {}", offset, bytes.len());
+        println!("Write request: offset {offset} len {}", bytes.len());
 
         let _event = unsafe {
             self.cl_queue.enqueue_write_buffer(
@@ -110,8 +110,8 @@ impl BlockDevice for VRamDisk {
             )
         }
         .map_err(|cl_err| {
-            println!("Write error: {}", cl_err);
-            std::io::Error::new(std::io::ErrorKind::Other, cl_err)
+            eprintln!("Write error: {cl_err}");
+            io::Error::other(cl_err)
         })?;
 
         Ok(())
@@ -119,12 +119,19 @@ impl BlockDevice for VRamDisk {
 
     fn unmount(&mut self) {
         #[cfg(debug_assertions)]
-        println!("device unmounted");
+        println!("Device unmounted");
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
+    fn flush(&mut self) -> io::Result<()> {
         #[cfg(debug_assertions)]
-        println!("flush request");
+        println!("Flush request");
+
+        Ok(())
+    }
+
+    fn trim(&mut self, _offset: u64, _len: u32) -> io::Result<()> {
+        #[cfg(debug_assertions)]
+        println!("Trim request: offset {_offset} len {_len}");
 
         Ok(())
     }
