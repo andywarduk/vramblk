@@ -44,6 +44,10 @@ struct MountArgs {
     /// Disk size to create - eg. 2097152k, 2048, 2g. Default unit megabytes
     #[clap(action, value_parser = parse_size_arg)]
     size: u64,
+
+    /// Notify systemd that the service is ready
+    #[clap(short = 'n', long = "systemd-notify", default_value_t = false, action)]
+    sd_notify: bool,
 }
 
 fn main() -> ExitCode {
@@ -63,7 +67,7 @@ fn main() -> ExitCode {
         }
     }
 
-    return ExitCode::SUCCESS;
+    ExitCode::SUCCESS
 }
 
 fn process_command() -> Result<(), Box<dyn Error>> {
@@ -88,6 +92,7 @@ fn process_command() -> Result<(), Box<dyn Error>> {
                 mount_args.gpu,
                 blocks as usize,
                 mount_args.block_size as usize,
+                mount_args.sd_notify,
             )?;
         }
     }

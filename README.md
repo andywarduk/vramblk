@@ -10,10 +10,22 @@ Creates a block linux block device in GPU video memory. The block device can the
 cargo build
 ```
 
+or
+
+```sh
+make debug
+```
+
 ### Release build
 
 ```sh
 cargo build --release
+```
+
+or
+
+```sh
+make release
 ```
 
 ## Installing (release build)
@@ -21,6 +33,12 @@ cargo build --release
 ```sh
 sudo cp target/release/vramblk /usr/local/sbin
 sudo chmod 700 /usr/local/sbin/vramblk
+```
+
+or
+
+```sh
+make install
 ```
 
 Check OpenCL installation by listing available GPU devices:
@@ -103,6 +121,32 @@ Unmount the disk
 
 ```sh
 sudo umount /mnt/tmp
+```
+
+## Systemd units
+
+To install the two systemd unit files, vramblk and vramblk-swap, do:
+
+```sh
+$ make systemd
+sudo cp systemd/vramblk*.service /etc/systemd/system
+sudo chown root:root /etc/systemd/system/vramblk*
+sudo systemctl daemon-reload
+sudo systemctl enable vramblk
+sudo systemctl enable vramblk-swap
+sudo systemctl start vramblk-swap
+```
+
+To stop:
+
+```sh
+sudo systemctl stop vramblk
+```
+
+To start:
+
+```sh
+sudo systemctl start vramblk-swap
 ```
 
 ## Credits

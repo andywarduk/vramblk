@@ -1,0 +1,16 @@
+[Unit]
+Description=Set up VRAM swap
+After=default.target
+Requires=vramblk.service 
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+Environment=DEVICE=/dev/nbd0
+ExecCondition=sh -c "! fgrep $DEVICE /proc/swaps"
+ExecStartPre=sh -c "ok=0; for i in 1 2 3 4 5; do size=$(blockdev --getsize64 $DEVICE); if [ $size -gt 0 ]; then ok=1; break; fi; sleep 1; done; if [ $ok -ne 1 ]; then exit 1; fi; mkswap $DEVICE"
+ExecStart=swapon -p0 $DEVICE
+ExecStop=swapoff $DEVICE
+
+[Install]
+WantedBy=default.target

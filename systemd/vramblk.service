@@ -1,0 +1,16 @@
+[Unit]
+Description=Set up VRAM block device
+After=default.target
+
+[Service]
+Type=notify
+Environment=DEVICE=/dev/nbd0
+ExecStartPre=modprobe nbd
+ExecStart=/usr/local/sbin/vramblk mount -n -d $DEVICE 7G
+NotifyAccess=main
+# Prevent swapping
+MemorySwapMax=0
+
+[Install]
+WantedBy=default.target
+

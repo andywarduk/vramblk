@@ -6,6 +6,7 @@ use opencl3::{
     memory::{Buffer, CL_MEM_READ_WRITE},
     types::CL_BLOCKING,
 };
+use sd_notify::{notify, NotifyState};
 use vblk::{mount, BlockDevice};
 
 use crate::cl::initialise_cl;
@@ -54,7 +55,7 @@ impl VRamDisk {
         })
     }
 
-    fn mount(&mut self, nbd_device: &str) -> io::Result<()> {
+    fn mount(&mut self, nbd_device: &str, sd_notify: bool) -> io::Result<()> {
         unsafe {
             // Mount the device
             mount(self, nbd_device, |device| {
@@ -68,9 +69,27 @@ impl VRamDisk {
                 })
                 .expect("Failed to install terminate handler");
 
+                // Notify systemd we are ready
+                if sd_notify {
+                    match notify(false, &[NotifyState::Ready]) {
+                        Ok(()) => {}
+                        Err(e) => eprintln!("Warning: unable to send READY state to systemd ({e})"),
+                    }
+                }
+
                 Ok(())
             })
+        }?;
+
+        // Notify systemd we are stopping
+        if sd_notify {
+            match notify(false, &[NotifyState::Stopping]) {
+                Ok(()) => {}
+                Err(e) => eprintln!("Warning: unable to send STOPPING state to systemd ({e})"),
+            }
         }
+
+        Ok(())
     }
 }
 
@@ -150,12 +169,13 @@ pub fn start_disk(
     gpu: Option<u16>,
     blocks: usize,
     block_size: usize,
+    sd_notify: bool,
 ) -> Result<(), Box<dyn Error>> {
     // Create the block device
     let mut blkdev = VRamDisk::new(gpu, blocks, block_size)?;
 
     // Mount the block device
-    blkdev.mount(nbd_device)?;
+    blkdev.mount(nbd_device, sd_notify)?;
 
     Ok(())
 }
